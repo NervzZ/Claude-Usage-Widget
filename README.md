@@ -57,4 +57,4 @@ If you run long Claude Code sessions that hit the 5‑hour limit, `AutoResume` w
 
 ## License
 
-Not specified yet — add one (e.g. MIT) if you'd like others to reuse it.
+MIT — see [LICENSE](LICENSE).
