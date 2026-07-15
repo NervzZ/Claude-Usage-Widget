@@ -1,0 +1,23 @@
+# Build output (do not ship the build — rebuild from source)
+/app/
+/bin/
+/obj/
+/native/*.obj
+*.exe
+*.pdb
+
+# Runtime data (may contain your usage figures — never commit)
+config.json
+cache.json
+rate_limits.json
+
+# Scratch
+/trash/
+
+# Internal dev notes / logs (not part of the public project)
+/CC-Session-Logs/
+/CLAUDE.md
+
+# Legacy .NET implementation (superseded by native/)
+/Program.cs
+/ClaudeWidget.csproj
