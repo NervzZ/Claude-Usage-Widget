@@ -22,7 +22,7 @@ native\build.bat app\ClaudeWidget.exe
 
 `build.bat` runs `vcvars64.bat` and compiles a single self‑contained `app\ClaudeWidget.exe` (~230 KB, static CRT — no DLLs to ship). If your Visual Studio isn't the 2022 **Community** edition, edit the `vcvars64.bat` path at the top of `native\build.bat`.
 
-Then run `app\ClaudeWidget.exe`. Right‑click the tray icon for options (Refresh, Start with Windows, Reset position, Exit). Drag the widget to reposition it along the taskbar.
+Then run `app\ClaudeWidget.exe`. Right‑click the tray icon for options (Refresh, Start with Windows, Reset position, Quit). Drag the widget to reposition it along the taskbar.
 
 ## How it works
 

@@ -37,7 +37,7 @@ using namespace Gdiplus;
 #define ID_REFRESH     1001
 #define ID_STARTUP     1002
 #define ID_RESET       1003
-#define ID_EXIT        1004
+#define ID_QUIT        1004
 #define ID_AUTORESUME  1005
 #define ID_TESTRESUME  1006
 
@@ -928,7 +928,7 @@ static void showMenu() {
     AppendMenuW(m, MF_STRING | (g_cfg.autoResume ? MF_CHECKED : 0), ID_AUTORESUME, L"Auto-resume on 5h reset");
     AppendMenuW(m, MF_STRING, ID_TESTRESUME, L"Test resume now");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, ID_EXIT, L"Exit");
+    AppendMenuW(m, MF_STRING, ID_QUIT, L"Quit");
     POINT pt; GetCursorPos(&pt);
     SetForegroundWindow(g_hwnd);
     TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_hwnd, nullptr);
@@ -979,7 +979,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!g_cfg.autoResume) { g_armed = false; paintLayered(); }
             break;
         case ID_TESTRESUME: triggerResume(); break;
-        case ID_EXIT: DestroyWindow(hwnd); break;
+        case ID_QUIT: DestroyWindow(hwnd); break;
         }
         return 0;
     case WM_DISPLAYCHANGE:
