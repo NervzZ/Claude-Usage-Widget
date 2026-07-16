@@ -4,7 +4,7 @@ A tiny Windows 11 taskbar widget that shows your Claude subscription usage at a 
 
 ![screenshot](screenshot.png)
 
-The bars go green → amber → red as you approach each limit. The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
+The bars go green → amber → red as you approach each limit. The session bar's label is a live countdown to its reset (`H:MM`, updated once a minute; shows `5h` when no reset time is known). The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
 
 ## Requirements
 

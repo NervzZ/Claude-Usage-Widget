@@ -282,6 +282,7 @@ static ULONG_PTR g_gdip = 0;
 static NOTIFYICONDATAW g_nid{};
 static HICON g_trayIcon = nullptr;
 static unsigned long long g_rlFileTime = 0;
+static long long g_cdMin = -2;             // last-painted 5h countdown minute (-1 = none/past); repaint only when it changes
 // auto-resume state (touched only on the UI thread)
 static bool  g_armed = false;
 static unsigned long long g_resetFt = 0;   // the 5h reset instant we're waiting on (UTC FILETIME)
@@ -713,6 +714,16 @@ static void checkStatuslineFile() {
 }
 
 // ---- painting -------------------------------------------------------------
+// Whole minutes until a bar's reset (-1 = none/past). Drives the 5h countdown label.
+static long long resetMinLeft(const BarData& b) {
+    if (!b.resetsFt) return -1;
+    long long remain = ((long long)b.resetsFt - (long long)nowFt()) / 10000000LL;
+    return remain > 0 ? remain / 60 : -1;
+}
+static long long fiveHourMinLeft() {
+    for (auto& b : g_bars) if (b.label == L"5h") return resetMinLeft(b);
+    return -1;
+}
 static Color barColor(const BarData& b) {
     if (b.stale) return Color(255, 122, 122, 122);
     if (b.severity == "exceeded" || b.severity == "rejected" || b.percent >= 85) return Color(255, 235, 87, 87);
@@ -775,8 +786,15 @@ static void drawContent(Graphics& g, int w, int h) {
             g.DrawString(txt, -1, &font, rr, &sfL, &armBr);
             continue;
         }
+        // 5h row: label shows time-to-reset as H:MM; falls back to "5h" when unknown/past
         RectF lr((REAL)pad, (REAL)y, (REAL)labelW, (REAL)rowH);
-        g.DrawString(b.label.c_str(), -1, &font, lr, &sfL, &labelBr);
+        const wchar_t* lbl = b.label.c_str();
+        wchar_t cd[16];
+        if (b.label == L"5h") {
+            long long m = resetMinLeft(b);
+            if (m >= 0) { wsprintfW(cd, L"%d:%02d", (int)(m / 60), (int)(m % 60)); lbl = cd; }
+        }
+        g.DrawString(lbl, -1, &font, lr, &sfL, &labelBr);
         wchar_t pcts[16]; wsprintfW(pcts, L"%d%%", b.percent);
         RectF pr((REAL)(w - pctW - pad), (REAL)y, (REAL)pctW, (REAL)rowH);
         SolidBrush pctBr(b.stale ? Color(255, 128, 128, 128) : Color(255, 220, 220, 220));
@@ -952,6 +970,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g_targetCount = (int)findTerminals().size();
                     paintLayered();
                 }
+            } else {
+                long long m = fiveHourMinLeft();            // 5h label countdown: repaint only on minute change
+                if (m != g_cdMin) { g_cdMin = m; paintLayered(); }
             }
             if (++g_tick % 15 == 0) EmptyWorkingSet(GetCurrentProcess());
         }
