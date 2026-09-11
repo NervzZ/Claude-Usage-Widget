@@ -236,6 +236,17 @@ static std::wstring formatReset(unsigned long long ftUtc) {
     }
     return buf;
 }
+// Absolute local reset stamp, e.g. "Mon 14 Sep 09:00" — for the weekly rows once their limit is hit.
+static std::wstring formatResetDate(unsigned long long ftUtc) {
+    FILETIME ftu; ftu.dwLowDateTime = (DWORD)(ftUtc & 0xFFFFFFFF); ftu.dwHighDateTime = (DWORD)(ftUtc >> 32);
+    SYSTEMTIME utc, loc; FileTimeToSystemTime(&ftu, &utc);
+    if (!SystemTimeToTzSpecificLocalTime(nullptr, &utc, &loc)) loc = utc;
+    static const wchar_t* dow[] = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat" };
+    static const wchar_t* mon[] = { L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec" };
+    wchar_t buf[48];
+    wsprintfW(buf, L"%s %d %s %02d:%02d", dow[loc.wDayOfWeek % 7], loc.wDay, mon[(loc.wMonth + 11) % 12], loc.wHour, loc.wMinute);
+    return buf;
+}
 
 // ---- model ----------------------------------------------------------------
 struct BarData {
@@ -283,6 +294,7 @@ static NOTIFYICONDATAW g_nid{};
 static HICON g_trayIcon = nullptr;
 static unsigned long long g_rlFileTime = 0;
 static long long g_cdMin = -2;             // last-painted 5h countdown minute (-1 = none/past); repaint only when it changes
+static int   g_rdMask = -1;                // last-painted set of rows showing a reset date (bit i = g_bars[i])
 // auto-resume state (touched only on the UI thread)
 static bool  g_armed = false;
 static unsigned long long g_resetFt = 0;   // the 5h reset instant we're waiting on (UTC FILETIME)
@@ -677,6 +689,8 @@ static bool mergeRl(const JVal& root, const char* key, const wchar_t* label) {
     if (auto* p = el->get("used_percentage"); p && p->isNum()) {
         int v = (int)(p->n + 0.5);
         if (v != bar->percent) { bar->percent = v; changed = true; }
+        // statusline carries no severity: a polled "exceeded" would outlive the reset and pin the reset-date row
+        if (bar->severity != "normal") { bar->severity = "normal"; changed = true; }
     }
     if (auto* r = el->get("resets_at")) {
         unsigned long long ft = 0;
@@ -723,6 +737,18 @@ static long long resetMinLeft(const BarData& b) {
 static long long fiveHourMinLeft() {
     for (auto& b : g_bars) if (b.label == L"5h") return resetMinLeft(b);
     return -1;
+}
+static bool atLimit(const BarData& b) {
+    return b.percent >= 100 || b.severity == "exceeded" || b.severity == "rejected";
+}
+// Non-5h rows (Week, Fable) swap bar + % for the reset date while their limit is hit.
+static bool showsResetDate(const BarData& b) {
+    return b.label != L"5h" && atLimit(b) && b.resetsFt > nowFt();
+}
+static int resetDateMask() {
+    int m = 0;
+    for (size_t i = 0; i < g_bars.size(); i++) if (showsResetDate(g_bars[i])) m |= 1 << i;
+    return m;
 }
 static Color barColor(const BarData& b) {
     if (b.stale) return Color(255, 122, 122, 122);
@@ -795,11 +821,18 @@ static void drawContent(Graphics& g, int w, int h) {
             if (m >= 0) { wsprintfW(cd, L"%d:%02d", (int)(m / 60), (int)(m % 60)); lbl = cd; }
         }
         g.DrawString(lbl, -1, &font, lr, &sfL, &labelBr);
+        int barX = pad + labelW + S(4);
+        if (showsResetDate(b)) {
+            std::wstring txt = L"resets " + formatResetDate(b.resetsFt);
+            RectF rr((REAL)barX, (REAL)y, (REAL)(w - pad - barX), (REAL)rowH);
+            SolidBrush rdBr(barColor(b));
+            g.DrawString(txt.c_str(), -1, &font, rr, &sfL, &rdBr);
+            continue;
+        }
         wchar_t pcts[16]; wsprintfW(pcts, L"%d%%", b.percent);
         RectF pr((REAL)(w - pctW - pad), (REAL)y, (REAL)pctW, (REAL)rowH);
         SolidBrush pctBr(b.stale ? Color(255, 128, 128, 128) : Color(255, 220, 220, 220));
         g.DrawString(pcts, -1, &font, pr, &sfR, &pctBr);
-        int barX = pad + labelW + S(4);
         int barW = (w - pctW - pad) - S(6) - barX;
         int barH = S(5);
         int barY = y + (rowH - barH) / 2;
@@ -899,8 +932,7 @@ static void updateArm() {
     const BarData* five = nullptr;
     for (auto& b : g_bars) if (b.label == L"5h") { five = &b; break; }
     if (!five) return;
-    bool atLimit = five->percent >= 100 || five->severity == "exceeded" || five->severity == "rejected";
-    if (g_cfg.autoResume && atLimit && five->resetsFt > nowFt() && five->resetsFt != g_lastFiredReset) {
+    if (g_cfg.autoResume && atLimit(*five) && five->resetsFt > nowFt() && five->resetsFt != g_lastFiredReset) {
         if (!g_armed || g_resetFt != five->resetsFt) {
             g_armed = true;
             g_resetFt = five->resetsFt;
@@ -972,7 +1004,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             } else {
                 long long m = fiveHourMinLeft();            // 5h label countdown: repaint only on minute change
-                if (m != g_cdMin) { g_cdMin = m; paintLayered(); }
+                int rd = resetDateMask();                   // ...or when a weekly row's reset instant passes
+                if (m != g_cdMin || rd != g_rdMask) { g_cdMin = m; g_rdMask = rd; paintLayered(); }
             }
             if (++g_tick % 15 == 0) EmptyWorkingSet(GetCurrentProcess());
         }
