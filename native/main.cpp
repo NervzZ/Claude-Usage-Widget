@@ -1,5 +1,5 @@
 // ClaudeWidget - native Win32 taskbar usage overlay.
-// Shows Claude subscription usage as 3 stacked bars (5h session / weekly all / weekly Fable).
+// Shows Claude subscription usage as 2 stacked bars (5h session / weekly).
 // Topmost tool window locked into the taskbar band; ~single-digit MB, ~0% idle CPU.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -348,13 +348,6 @@ static void saveConfig() {
 }
 
 // ---- parse usage response into bars ---------------------------------------
-static std::wstring scopedLabel(const JVal& l) {
-    if (auto* sc = l.get("scope"); sc && sc->isObj())
-        if (auto* mo = sc->get("model"); mo && mo->isObj())
-            if (auto* dn = mo->get("display_name"); dn && dn->isStr())
-                return u8towide(dn->s);
-    return L"Model";
-}
 static void addUtil(const JVal& root, const char* prop, const wchar_t* label, std::vector<BarData>& out) {
     auto* el = root.get(prop);
     if (!el || !el->isObj()) return;
@@ -367,21 +360,23 @@ static std::vector<BarData> parseBars(const std::string& json) {
     std::vector<BarData> out;
     JVal root; JParser jp(json);
     if (!jp.parse(root) || !root.isObj()) return out;
+    // Only the two plan-wide limits get a row, in this order; per-model weekly limits
+    // (kind "weekly_scoped") and any other kind are deliberately not shown.
     if (auto* limits = root.get("limits"); limits && limits->isArr()) {
-        for (auto& l : limits->a) {
-            if (out.size() == 4) break;
-            if (!l.isObj()) continue;
-            std::string kind;
-            if (auto* k = l.get("kind"); k && k->isStr()) kind = k->s;
-            BarData b;
-            if (kind == "session") b.label = L"5h";
-            else if (kind == "weekly_all") b.label = L"Week";
-            else if (kind == "weekly_scoped") b.label = scopedLabel(l);
-            else b.label = u8towide(kind);
-            if (auto* p = l.get("percent"); p && p->isNum()) b.percent = (int)(p->n + 0.5);
-            if (auto* s = l.get("severity"); s && s->isStr()) b.severity = s->s;
-            if (auto* r = l.get("resets_at"); r && r->isStr()) b.resetsFt = isoToFt(r->s);
-            out.push_back(std::move(b));
+        static const struct { const char* kind; const wchar_t* label; } rows[] = {
+            { "session", L"5h" }, { "weekly_all", L"Week" } };
+        for (auto& row : rows) {
+            for (auto& l : limits->a) {
+                if (!l.isObj()) continue;
+                auto* k = l.get("kind");
+                if (!k || !k->isStr() || k->s != row.kind) continue;
+                BarData b; b.label = row.label;
+                if (auto* p = l.get("percent"); p && p->isNum()) b.percent = (int)(p->n + 0.5);
+                if (auto* s = l.get("severity"); s && s->isStr()) b.severity = s->s;
+                if (auto* r = l.get("resets_at"); r && r->isStr()) b.resetsFt = isoToFt(r->s);
+                out.push_back(std::move(b));
+                break;
+            }
         }
     }
     if (out.empty()) { // legacy shape
@@ -568,7 +563,7 @@ static void updateTooltipRect();
 static void paintLayered();
 static void applySize(int n) {
     if (n < 1) n = 1;
-    int w = S(176), h = n * S(14) + S(4);
+    int w = S(176), h = n * S(19) + S(4);
     SetWindowPos(g_hwnd, nullptr, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     updateTooltipRect();
     paintLayered();
@@ -636,13 +631,13 @@ static void updateTooltip() {
 }
 
 static HICON makeTrayIcon() {
-    // 3 coral bars on a 16x16 transparent icon, drawn via GDI+.
-    Bitmap bmp(16, 16, PixelFormat32bppARGB);
+    // 2 coral bars on a transparent icon, drawn via GDI+ at the small-icon size (crisp at any scaling).
+    int s = imax(16, GetSystemMetrics(SM_CXSMICON));
+    Bitmap bmp(s, s, PixelFormat32bppARGB);
     { Graphics g(&bmp); g.Clear(Color(0, 0, 0, 0));
       SolidBrush br(Color(255, 217, 119, 87));
-      g.FillRectangle(&br, 1, 3, 13, 2);
-      g.FillRectangle(&br, 1, 7, 9, 2);
-      g.FillRectangle(&br, 1, 11, 11, 2);
+      g.FillRectangle(&br, MulDiv(1, s, 16), MulDiv(3, s, 16), MulDiv(13, s, 16), MulDiv(3, s, 16));
+      g.FillRectangle(&br, MulDiv(1, s, 16), MulDiv(10, s, 16), MulDiv(9, s, 16), MulDiv(3, s, 16));
     }
     HICON ico = nullptr; bmp.GetHICON(&ico);
     return ico;
@@ -741,7 +736,7 @@ static long long fiveHourMinLeft() {
 static bool atLimit(const BarData& b) {
     return b.percent >= 100 || b.severity == "exceeded" || b.severity == "rejected";
 }
-// Non-5h rows (Week, Fable) swap bar + % for the reset date while their limit is hit.
+// The weekly row shows its reset date instead of label + bar + % while its limit is hit.
 static bool showsResetDate(const BarData& b) {
     return b.label != L"5h" && atLimit(b) && b.resetsFt > nowFt();
 }
@@ -772,7 +767,7 @@ static void drawContent(Graphics& g, int w, int h) {
     g.Clear(Color(1, 0, 0, 0));
 
     FontFamily ff(L"Segoe UI");
-    REAL px = 7.5f * g_dpi / 72.0f;
+    REAL px = 9.0f * g_dpi / 72.0f;
     Font font(&ff, px, FontStyleRegular, UnitPixel);
 
     if (g_bars.empty()) {
@@ -783,9 +778,11 @@ static void drawContent(Graphics& g, int w, int h) {
         g.DrawString(t.c_str(), -1, &font, r, &sf, &br);
         return;
     }
+    FontFamily ffSb(L"Segoe UI Semibold");   // percent values; plain Segoe UI if the face is missing
+    Font pctFont(ffSb.IsAvailable() ? &ffSb : &ff, px, FontStyleRegular, UnitPixel);
     int n = (int)g_bars.size();
     int rowH = (h - S(4)) / n;
-    int top = S(2), labelW = S(36), pctW = S(34), pad = S(8);
+    int top = S(2), labelW = S(38), pctW = S(36), pad = S(8);
     StringFormat sfL; sfL.SetLineAlignment(StringAlignmentCenter); sfL.SetAlignment(StringAlignmentNear);
     sfL.SetTrimming(StringTrimmingEllipsisCharacter); sfL.SetFormatFlags(StringFormatFlagsNoWrap);
     StringFormat sfR; sfR.SetLineAlignment(StringAlignmentCenter); sfR.SetAlignment(StringAlignmentFar);
@@ -812,6 +809,14 @@ static void drawContent(Graphics& g, int w, int h) {
             g.DrawString(txt, -1, &font, rr, &sfL, &armBr);
             continue;
         }
+        // weekly row at its limit: the whole row becomes the reset date (red live, grey stale)
+        if (showsResetDate(b)) {
+            std::wstring txt = L"resets " + formatResetDate(b.resetsFt);
+            RectF rr((REAL)pad, (REAL)y, (REAL)(w - pad * 2), (REAL)rowH);
+            SolidBrush rdBr(barColor(b));
+            g.DrawString(txt.c_str(), -1, &font, rr, &sfL, &rdBr);
+            continue;
+        }
         // 5h row: label shows time-to-reset as H:MM; falls back to "5h" when unknown/past
         RectF lr((REAL)pad, (REAL)y, (REAL)labelW, (REAL)rowH);
         const wchar_t* lbl = b.label.c_str();
@@ -821,20 +826,13 @@ static void drawContent(Graphics& g, int w, int h) {
             if (m >= 0) { wsprintfW(cd, L"%d:%02d", (int)(m / 60), (int)(m % 60)); lbl = cd; }
         }
         g.DrawString(lbl, -1, &font, lr, &sfL, &labelBr);
-        int barX = pad + labelW + S(4);
-        if (showsResetDate(b)) {
-            std::wstring txt = L"resets " + formatResetDate(b.resetsFt);
-            RectF rr((REAL)barX, (REAL)y, (REAL)(w - pad - barX), (REAL)rowH);
-            SolidBrush rdBr(barColor(b));
-            g.DrawString(txt.c_str(), -1, &font, rr, &sfL, &rdBr);
-            continue;
-        }
         wchar_t pcts[16]; wsprintfW(pcts, L"%d%%", b.percent);
         RectF pr((REAL)(w - pctW - pad), (REAL)y, (REAL)pctW, (REAL)rowH);
-        SolidBrush pctBr(b.stale ? Color(255, 128, 128, 128) : Color(255, 220, 220, 220));
-        g.DrawString(pcts, -1, &font, pr, &sfR, &pctBr);
+        SolidBrush pctBr(b.stale ? Color(255, 128, 128, 128) : Color(255, 235, 235, 235));
+        g.DrawString(pcts, -1, &pctFont, pr, &sfR, &pctBr);
+        int barX = pad + labelW + S(4);
         int barW = (w - pctW - pad) - S(6) - barX;
-        int barH = S(5);
+        int barH = S(6);
         int barY = y + (rowH - barH) / 2;
         if (barW > barH) {
             fillPill(g, Color(255, 58, 58, 58), barX, barY, barW, barH);
@@ -1041,7 +1039,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_DPICHANGED:
         g_dpi = HIWORD(wp);
-        applySize(g_bars.empty() ? 3 : (int)g_bars.size());
+        applySize(g_bars.empty() ? 2 : (int)g_bars.size());
         if (g_cfg.manualPosition) clampToTaskbar(); else positionOverTaskbar();
         paintLayered();
         return 0;
@@ -1150,7 +1148,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_LAYERED,
         L"ClaudeWidgetWnd", L"Claude Usage", WS_POPUP, 0, 0, 10, 10, nullptr, nullptr, hInst, nullptr);
     g_dpi = GetDpiForWindow(g_hwnd);
-    applySize(g_bars.empty() ? 3 : (int)g_bars.size());
+    applySize(g_bars.empty() ? 2 : (int)g_bars.size());
     createTooltip();
     updateTooltip();
 

@@ -1,16 +1,16 @@
 # Claude Usage Widget
 
-A tiny Windows 11 taskbar widget that shows your Claude subscription usage at a glance — three stacked bars: **5‑hour session**, **weekly (all models)**, and **weekly Fable**. Native Win32 + GDI+, no runtime dependencies, ~1 MB RAM and ~0 % idle CPU.
+A tiny Windows 11 taskbar widget that shows your Claude subscription usage at a glance — two stacked bars: **5‑hour session** and **weekly**. Native Win32 + GDI+, no runtime dependencies, ~1 MB RAM and ~0 % idle CPU.
 
 ![screenshot](screenshot.png)
 
-The bars go green → amber → red as you approach each limit. The session bar's label is a live countdown to its reset (`H:MM`, updated once a minute; shows `5h` when no reset time is known). When a weekly limit (all‑models or per‑model) is used up, its bar is replaced by the date and time it resets (e.g. `resets Tue 15 Sep 01:00`). The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
+The bars go green → amber → red as you approach each limit. The session bar's label is a live countdown to its reset (`H:MM`, updated once a minute; shows `5h` when no reset time is known). When the weekly limit is used up, its row is replaced by the date and time it resets (e.g. `resets Tue 15 Sep 01:00`). Only these two plan-wide limits are shown; per-model weekly limits are ignored. The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
 
 ## Requirements
 
 - **Windows 10/11 (x64)**
 - **Claude Code**, installed and logged in. The widget reads your OAuth token from `~/.claude/.credentials.json` (the same file Claude Code manages) — there are **no API keys to configure**.
-- To build: **Visual Studio 2022** with the *Desktop development with C++* workload (gives you MSVC + the Windows SDK).
+- To build: **Visual Studio 2022 or newer** with the *Desktop development with C++* workload (gives you MSVC + the Windows SDK).
 
 ## Build
 
@@ -20,7 +20,7 @@ cd Claude-Usage-Widget
 native\build.bat app\ClaudeWidget.exe
 ```
 
-`build.bat` runs `vcvars64.bat` and compiles a single self‑contained `app\ClaudeWidget.exe` (~230 KB, static CRT — no DLLs to ship). If your Visual Studio isn't the 2022 **Community** edition, edit the `vcvars64.bat` path at the top of `native\build.bat`.
+`build.bat` finds your Visual Studio with `vswhere`, runs its `vcvars64.bat` and compiles a single self‑contained `app\ClaudeWidget.exe` (~250 KB, static CRT — no DLLs to ship).
 
 Then run `app\ClaudeWidget.exe`. Right‑click the tray icon for options (Refresh, Start with Windows, Reset position, Quit). Drag the widget to reposition it along the taskbar.
 
