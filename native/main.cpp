@@ -292,9 +292,10 @@ static std::wstring g_exeDir;
 static ULONG_PTR g_gdip = 0;
 static NOTIFYICONDATAW g_nid{};
 static HICON g_trayIcon = nullptr;
+static UINT  g_wmTaskbarCreated = 0;       // broadcast by Explorer when it (re)creates the taskbar; its tray is then empty
 static unsigned long long g_rlFileTime = 0;
 static long long g_cdMin = -2;             // last-painted 5h countdown minute (-1 = none/past); repaint only when it changes
-static int   g_rdMask = -1;                // last-painted set of rows showing a reset date (bit i = g_bars[i])
+static int   g_rdMask = -1;                // last-painted set of rows showing their reset (bit i = g_bars[i])
 // auto-resume state (touched only on the UI thread)
 static bool  g_armed = false;
 static unsigned long long g_resetFt = 0;   // the 5h reset instant we're waiting on (UTC FILETIME)
@@ -595,11 +596,13 @@ static std::wstring buildDetailText() {
     if (!g_note.empty()) { if (!s.empty()) s += L"\n"; s += g_note; }
     return s;
 }
+static void addTray();
 static void updateTray() {
     std::wstring t = buildTrayText();
     wcsncpy_s(g_nid.szTip, t.c_str(), _TRUNCATE);
     g_nid.uFlags = NIF_TIP;
-    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+    // MODIFY fails when the shell no longer has the icon (Explorer restarted, or the add at logon failed): add it back.
+    if (!Shell_NotifyIconW(NIM_MODIFY, &g_nid)) addTray();
 }
 static TOOLINFOW g_ti{};
 static std::wstring g_tipText;
@@ -643,14 +646,15 @@ static HICON makeTrayIcon() {
     return ico;
 }
 static void addTray() {
+    // Repeatable: runs again whenever the shell has lost the icon (updateTray, "TaskbarCreated").
     g_nid.cbSize = sizeof(g_nid);
     g_nid.hWnd = g_hwnd;
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_APP_TRAY;
-    g_trayIcon = makeTrayIcon();
+    if (!g_trayIcon) g_trayIcon = makeTrayIcon();
     g_nid.hIcon = g_trayIcon;
-    wcscpy_s(g_nid.szTip, L"Claude usage");
+    if (!g_nid.szTip[0]) wcscpy_s(g_nid.szTip, L"Claude usage");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }
 static void removeTray() { Shell_NotifyIconW(NIM_DELETE, &g_nid); if (g_trayIcon) DestroyIcon(g_trayIcon); }
@@ -736,13 +740,14 @@ static long long fiveHourMinLeft() {
 static bool atLimit(const BarData& b) {
     return b.percent >= 100 || b.severity == "exceeded" || b.severity == "rejected";
 }
-// The weekly row shows its reset date instead of label + bar + % while its limit is hit.
-static bool showsResetDate(const BarData& b) {
-    return b.label != L"5h" && atLimit(b) && b.resetsFt > nowFt();
+// While its limit is hit, a row shows when it resets in place of its bar + %: the weekly row its
+// date (whole row, label included), the 5h row its time (label kept: it is the countdown).
+static bool showsReset(const BarData& b) {
+    return atLimit(b) && b.resetsFt > nowFt();
 }
-static int resetDateMask() {
+static int resetMask() {
     int m = 0;
-    for (size_t i = 0; i < g_bars.size(); i++) if (showsResetDate(g_bars[i])) m |= 1 << i;
+    for (size_t i = 0; i < g_bars.size(); i++) if (showsReset(g_bars[i])) m |= 1 << i;
     return m;
 }
 static Color barColor(const BarData& b) {
@@ -809,8 +814,9 @@ static void drawContent(Graphics& g, int w, int h) {
             g.DrawString(txt, -1, &font, rr, &sfL, &armBr);
             continue;
         }
+        bool five = b.label == L"5h", reset = showsReset(b);
         // weekly row at its limit: the whole row becomes the reset date (red live, grey stale)
-        if (showsResetDate(b)) {
+        if (reset && !five) {
             std::wstring txt = L"resets " + formatResetDate(b.resetsFt);
             RectF rr((REAL)pad, (REAL)y, (REAL)(w - pad * 2), (REAL)rowH);
             SolidBrush rdBr(barColor(b));
@@ -821,16 +827,25 @@ static void drawContent(Graphics& g, int w, int h) {
         RectF lr((REAL)pad, (REAL)y, (REAL)labelW, (REAL)rowH);
         const wchar_t* lbl = b.label.c_str();
         wchar_t cd[16];
-        if (b.label == L"5h") {
+        if (five) {
             long long m = resetMinLeft(b);
             if (m >= 0) { wsprintfW(cd, L"%d:%02d", (int)(m / 60), (int)(m % 60)); lbl = cd; }
         }
         g.DrawString(lbl, -1, &font, lr, &sfL, &labelBr);
+        int barX = pad + labelW + S(4);
+        // 5h row at its limit, auto-resume not armed (off, or no fresh poll yet): the reset time
+        // replaces bar + %, so it shows without auto-resume too
+        if (reset) {
+            std::wstring txt = L"resets " + formatReset(b.resetsFt);
+            RectF rr((REAL)barX, (REAL)y, (REAL)(w - pad - barX), (REAL)rowH);
+            SolidBrush rdBr(barColor(b));
+            g.DrawString(txt.c_str(), -1, &font, rr, &sfL, &rdBr);
+            continue;
+        }
         wchar_t pcts[16]; wsprintfW(pcts, L"%d%%", b.percent);
         RectF pr((REAL)(w - pctW - pad), (REAL)y, (REAL)pctW, (REAL)rowH);
         SolidBrush pctBr(b.stale ? Color(255, 128, 128, 128) : Color(255, 235, 235, 235));
         g.DrawString(pcts, -1, &pctFont, pr, &sfR, &pctBr);
-        int barX = pad + labelW + S(4);
         int barW = (w - pctW - pad) - S(6) - barX;
         int barH = S(6);
         int barY = y + (rowH - barH) / 2;
@@ -985,11 +1000,15 @@ static void showMenu() {
 
 // ---- window proc ----------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == g_wmTaskbarCreated && msg) { addTray(); return 0; }   // Explorer restarted: its new tray lost our icon
     switch (msg) {
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(hwnd, &ps); EndPaint(hwnd, &ps); paintLayered(); return 0; }
     case WM_ERASEBKGND: return 1;
     case WM_TIMER:
-        if (wp == TID_POLL) triggerPoll();
+        if (wp == TID_POLL) {
+            triggerPoll();
+            if (!g_polling) updateTray();   // no poll started (rate-limit cooldown): still check the tray icon is there
+        }
         else if (wp == TID_FS) {
             fullscreenCheck(); checkStatuslineFile(); watchdog();
             if (g_armed) {
@@ -1002,7 +1021,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             } else {
                 long long m = fiveHourMinLeft();            // 5h label countdown: repaint only on minute change
-                int rd = resetDateMask();                   // ...or when a weekly row's reset instant passes
+                int rd = resetMask();                       // ...or when a row's reset instant passes
                 if (m != g_cdMin || rd != g_rdMask) { g_cdMin = m; g_rdMask = rd; paintLayered(); }
             }
             if (++g_tick % 15 == 0) EmptyWorkingSet(GetCurrentProcess());
@@ -1145,8 +1164,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
 
+    g_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     g_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_LAYERED,
         L"ClaudeWidgetWnd", L"Claude Usage", WS_POPUP, 0, 0, 10, 10, nullptr, nullptr, hInst, nullptr);
+    ChangeWindowMessageFilterEx(g_hwnd, g_wmTaskbarCreated, MSGFLT_ALLOW, nullptr);   // else lost when we run elevated (Explorer does not)
     g_dpi = GetDpiForWindow(g_hwnd);
     applySize(g_bars.empty() ? 2 : (int)g_bars.size());
     createTooltip();
