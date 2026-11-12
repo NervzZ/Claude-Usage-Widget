@@ -1,10 +1,10 @@
 # Claude Usage Widget
 
-A tiny Windows 11 taskbar widget that shows your Claude subscription usage at a glance — two stacked bars: **5‑hour session** and **weekly**. Native Win32 + GDI+, no runtime dependencies, ~1 MB RAM and ~0 % idle CPU.
+A tiny Windows 11 taskbar widget that shows your Claude subscription usage at a glance — three stacked bars: **5‑hour session**, **weekly (all models)**, and **weekly Fable**. Native Win32 + GDI+, no runtime dependencies, ~1 MB RAM and ~0 % idle CPU.
 
 ![screenshot](screenshot.png)
 
-The bars go green → amber → red as you approach each limit. The session bar's label is a live countdown to its reset (`H:MM`, updated once a minute; shows `5h` when no reset time is known). When a limit is used up, its row shows when it resets instead of its bar: the session row the time, next to the countdown (e.g. `resets 14:30`), the weekly row the date and time (e.g. `resets Tue 15 Sep 01:00`). Only these two plan-wide limits are shown; per-model weekly limits are ignored. The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
+The bars go green → amber → red as you approach each limit. The session bar's label is a live countdown to its reset (`H:MM`, updated once a minute; shows `5h` when no reset time is known). When a limit is used up, its row shows when it resets instead of its bar: the session row the time, next to the countdown (e.g. `resets 14:30`), a weekly row (all‑models or per‑model) the date and time (e.g. `resets Tue 15 Sep 01:00`). The widget sits directly in your taskbar next to the system tray, is borderless, stays pinned to the taskbar band, and auto‑hides when a fullscreen app is on that monitor.
 
 ## Requirements
 
